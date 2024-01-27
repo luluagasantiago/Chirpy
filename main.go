@@ -14,6 +14,9 @@ func main() {
 	server := http.Server{
 		Handler: corsMux,
 	}
+	mux.Handle("/", http.FileServer(http.Dir(".")))
+
+	// by default listens to port 80
 	log.Fatal(server.ListenAndServe())
 
 }
