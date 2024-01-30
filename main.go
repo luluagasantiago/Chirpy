@@ -9,18 +9,15 @@ import (
 func main() {
 	const filepathRoot = "."
 	const port = "8080"
-	//look: serveMux implements the interface Handler ()
-	apcfg := &apiConfig{fileserverHits: 0}
+
+	apcfg := apiConfig{
+		fileserverHits: 0,
+	}
 	mux := http.NewServeMux()
 	mux.Handle("/app/", http.StripPrefix("/app", apcfg.middlewareMetricsInc(http.FileServer(http.Dir(filepathRoot)))))
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		//w.WriteHeader(200)
-		w.Write([]byte(http.StatusText(200)))
-
-	})
-	mux.HandleFunc("/metrics", apcfg.middlewareCountRequests)
-	mux.HandleFunc("/reset", apcfg.middlewareResetCounts)
+	mux.HandleFunc("/metrics", apcfg.handlerMetrics)
+	mux.HandleFunc("/reset", apcfg.handlerReset)
+	mux.HandleFunc("/healthz", handlerReadiness)
 
 	// mux is a hanlder bc it has an implementation of the ServeHTTP function
 	corsMux := middlewareCors(mux) //
@@ -34,17 +31,7 @@ func main() {
 	log.Fatal(server.ListenAndServe())
 }
 
-/*
-#What is a Handler?
-
-A Handler responds to an HTTP request.
-
-type Handler interface {
-	ServeHTTP(ResponseWriter, *Request)
-}
-
-*/
-
+// Here the middleware is just setting some headers and then passing the handler along with next.ServeHTTP()
 func middlewareCors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		//this wrapper sets the headers for the ResponseWriter
@@ -69,23 +56,29 @@ type apiConfig struct {
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cfg.fileserverHits++
-		fmt.Println("HOLA")
+		fmt.Println("Increment req....")
 		next.ServeHTTP(w, r)
 	})
 }
 
-func (cfg *apiConfig) middlewareCountRequests(w http.ResponseWriter, r *http.Request) {
+func (cfg *apiConfig) handlerMetrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	//w.WriteHeader(200)
-	fmt.Println("HOLA1")
+
+	fmt.Println("Count req...")
 	w.Write([]byte(fmt.Sprintf("Hits: %v", cfg.fileserverHits)))
 
 }
 
-func (cfg *apiConfig) middlewareResetCounts(w http.ResponseWriter, r *http.Request) {
+func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	cfg.fileserverHits = 0
-	w.WriteHeader(200)
-	fmt.Println("HOLA")
+	fmt.Println("Reset req...")
+	w.Write([]byte("Hits reset to 0"))
+
+}
+
+func handlerReadiness(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write([]byte(http.StatusText(http.StatusOK)))
 
 }
