@@ -4,24 +4,28 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+
+	"github.com/go-chi/chi/v5"
 )
 
 func main() {
 	const filepathRoot = "."
 	const port = "8080"
+	r := chi.NewRouter()
 
 	apcfg := apiConfig{
 		fileserverHits: 0,
 	}
-	mux := http.NewServeMux()
-	mux.Handle("/app/", http.StripPrefix("/app", apcfg.middlewareMetricsInc(http.FileServer(http.Dir(filepathRoot)))))
-	mux.HandleFunc("/metrics", apcfg.handlerMetrics)
-	mux.HandleFunc("/reset", apcfg.handlerReset)
-	mux.HandleFunc("/healthz", handlerReadiness)
 
-	// mux is a hanlder bc it has an implementation of the ServeHTTP function
-	corsMux := middlewareCors(mux) //
-	// http.HandlerFunc -> type HandlerFunc func(ResponseWriter, *Request) -> Handler interface
+	fsHandler := apcfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(filepathRoot))))
+
+	r.Handle("/app/*", fsHandler)
+	r.Handle("/app", fsHandler)
+	r.HandleFunc("/reset", apcfg.handlerReset)
+	r.Method("GET", "/metrics", http.HandlerFunc(apcfg.handlerMetrics))
+	r.Method("GET", "/healthz", http.HandlerFunc(handlerReadiness))
+
+	corsMux := middlewareCors(r) //
 	server := http.Server{
 		Addr:    ":" + port,
 		Handler: corsMux,
