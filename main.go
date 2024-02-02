@@ -1,9 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -25,7 +28,8 @@ func main() {
 	apiRouter := chi.NewRouter()
 
 	apiRouter.Get("/reset", apcfg.handlerReset)
-	apiRouter.Get("/healthz", http.HandlerFunc(handlerReadiness))
+	apiRouter.Get("/healthz", handlerReadiness)
+	apiRouter.Post("/validate_chirp", handlerValidateChirp)
 	// Decided to decoupled the app from the api
 	// non-website endpoints will go to the /api namespace.
 	router.Mount("/api", apiRouter)
@@ -35,7 +39,7 @@ func main() {
 	//apcfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(filepathRoot))))
 
 	//adminRouter.Get("/metrics", apcfg.handlerMetrics(FileServer(http.Dir(filepathMetrics))))
-	adminRouter.Get("/metrics", http.HandlerFunc(apcfg.handlerMetrics))
+	adminRouter.Get("/metrics", apcfg.handlerMetrics)
 	router.Mount("/admin", adminRouter)
 
 	corsMux := middlewareCors(router) //
@@ -108,5 +112,79 @@ func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
 func handlerReadiness(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Write([]byte(http.StatusText(http.StatusOK)))
+
+}
+
+func handlerValidateChirp(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Body string `json:"body"`
+	}
+	type returnVals struct {
+		Cleaned string `json:"cleaned_body"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't decode parameters")
+		return
+	}
+	const maxChirpLenght = 140
+	if len(params.Body) > maxChirpLenght {
+		respondWithError(w, http.StatusBadRequest, "Chirp is too long")
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, returnVals{
+		Cleaned: clean_string(params.Body),
+	})
+
+}
+
+func respondWithError(w http.ResponseWriter, code int, msg string) {
+	if code > 499 {
+		log.Printf("Responding with 5XX error: %s", msg)
+	}
+	type errorResponse struct {
+		Error string `json:"error"`
+	}
+	respondWithJSON(w, code, errorResponse{
+		Error: msg,
+	})
+}
+
+func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	dat, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("Error marshalling JSON: %s", err)
+		w.WriteHeader(500)
+		return
+	}
+	w.WriteHeader(code)
+	w.Write(dat)
+}
+
+func clean_string(words string) string {
+	bad_words := []string{
+		"kerfuffle",
+		"sharbert",
+		"fornax",
+	}
+	splitWords := strings.Split(words, " ")
+	new_string := []string{}
+	for _, val := range splitWords {
+		loweredWord := strings.ToLower(val)
+		isBadWord := slices.Contains[[]string, string](bad_words, loweredWord)
+		if isBadWord {
+			new_string = append(new_string, "****")
+		} else {
+			new_string = append(new_string, val)
+		}
+
+	}
+
+	return strings.Join(new_string, " ")
 
 }
