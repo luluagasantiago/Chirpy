@@ -11,7 +11,7 @@ import (
 func main() {
 	const filepathRoot = "."
 	const port = "8080"
-	r := chi.NewRouter()
+	router := chi.NewRouter()
 
 	apcfg := apiConfig{
 		fileserverHits: 0,
@@ -19,13 +19,26 @@ func main() {
 
 	fsHandler := apcfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(filepathRoot))))
 
-	r.Handle("/app/*", fsHandler)
-	r.Handle("/app", fsHandler)
-	r.HandleFunc("/reset", apcfg.handlerReset)
-	r.Method("GET", "/metrics", http.HandlerFunc(apcfg.handlerMetrics))
-	r.Method("GET", "/healthz", http.HandlerFunc(handlerReadiness))
+	router.Handle("/app/*", fsHandler)
+	router.Handle("/app", fsHandler)
 
-	corsMux := middlewareCors(r) //
+	apiRouter := chi.NewRouter()
+
+	apiRouter.Get("/reset", apcfg.handlerReset)
+	apiRouter.Get("/healthz", http.HandlerFunc(handlerReadiness))
+	// Decided to decoupled the app from the api
+	// non-website endpoints will go to the /api namespace.
+	router.Mount("/api", apiRouter)
+
+	adminRouter := chi.NewRouter()
+
+	//apcfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(filepathRoot))))
+
+	//adminRouter.Get("/metrics", apcfg.handlerMetrics(FileServer(http.Dir(filepathMetrics))))
+	adminRouter.Get("/metrics", http.HandlerFunc(apcfg.handlerMetrics))
+	router.Mount("/admin", adminRouter)
+
+	corsMux := middlewareCors(router) //
 	server := http.Server{
 		Addr:    ":" + port,
 		Handler: corsMux,
@@ -66,10 +79,21 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 }
 
 func (cfg *apiConfig) handlerMetrics(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Println("Count req...")
-	w.Write([]byte(fmt.Sprintf("Hits: %v", cfg.fileserverHits)))
+
+	const tpl = `<html>
+
+	<body>
+		<h1>Welcome, Chirpy Admin</h1>
+		<p>Chirpy has been visited %d times!</p>
+	</body>
+	
+	</html>
+	`
+
+	w.Write([]byte(fmt.Sprintf(tpl, cfg.fileserverHits)))
 
 }
 
