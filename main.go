@@ -6,15 +6,26 @@ import (
 	"log"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/luluagasantiago/Chirpy/internal/database"
 )
+
+type apiConfig struct {
+	fileserverHits int
+}
 
 func main() {
 	const filepathRoot = "."
 	const port = "8080"
 	router := chi.NewRouter()
+	db, err := database.NewDB("database.json")
+
+	if err != nil {
+		fmt.Print("Unable to create db", err)
+	}
 
 	apcfg := apiConfig{
 		fileserverHits: 0,
@@ -29,9 +40,14 @@ func main() {
 
 	apiRouter.Get("/reset", apcfg.handlerReset)
 	apiRouter.Get("/healthz", handlerReadiness)
-	apiRouter.Post("/validate_chirp", handlerValidateChirp)
-	// Decided to decoupled the app from the api
-	// non-website endpoints will go to the /api namespace.
+	//apiRouter.Post("/validate_chirp", handlerValidateChirp)
+	chirpsPostHandler := middlewarePostChirps(db)
+	apiRouter.Post("/chirps", chirpsPostHandler)
+	chirpsGetHandler := middlewareGetChirps(db)
+	apiRouter.Get("/chirps", chirpsGetHandler)
+	chirpsGetByIdHandler := middlewareGetChirpsById(db)
+	apiRouter.Get("/chirps/{chirpid}", chirpsGetByIdHandler)
+
 	router.Mount("/api", apiRouter)
 
 	adminRouter := chi.NewRouter()
@@ -68,10 +84,6 @@ func middlewareCors(next http.Handler) http.Handler {
 		//ServeHTTP dispatches the request to the handler
 		//whose pattern most closely matches the request URL from request.
 	})
-}
-
-type apiConfig struct {
-	fileserverHits int
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -115,29 +127,39 @@ func handlerReadiness(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func handlerValidateChirp(w http.ResponseWriter, r *http.Request) {
-	type parameters struct {
-		Body string `json:"body"`
-	}
-	type returnVals struct {
-		Cleaned string `json:"cleaned_body"`
-	}
-	decoder := json.NewDecoder(r.Body)
-	params := parameters{}
-	err := decoder.Decode(&params)
+func middlewarePostChirps(db *database.DB) http.HandlerFunc {
 
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't decode parameters")
-		return
-	}
-	const maxChirpLenght = 140
-	if len(params.Body) > maxChirpLenght {
-		respondWithError(w, http.StatusBadRequest, "Chirp is too long")
-		return
-	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 
-	respondWithJSON(w, http.StatusOK, returnVals{
-		Cleaned: clean_string(params.Body),
+		type parameters struct {
+			Body string `json:"body"`
+		}
+		type returnVals struct {
+			Id   int    `json:"id"`
+			Body string `json:"body"`
+		}
+		decoder := json.NewDecoder(r.Body)
+		params := parameters{}
+		err := decoder.Decode(&params)
+
+		if err != nil {
+			respondWithError(w, http.StatusInternalServerError, "Couldn't decode parameters")
+			return
+		}
+		const maxChirpLenght = 140
+		if len(params.Body) > maxChirpLenght {
+			respondWithError(w, http.StatusBadRequest, "Chirp is too long")
+			return
+		}
+		chirp, err := db.CreateChirp(params.Body)
+		if err != nil {
+			//fmt.Printf("Error when creating chirp in db %v\n", err)
+			respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Error when creating chirp in db %v\n", err))
+			return
+		}
+
+		respondWithJSON(w, http.StatusCreated, chirp)
+
 	})
 
 }
@@ -186,5 +208,48 @@ func clean_string(words string) string {
 	}
 
 	return strings.Join(new_string, " ")
+
+}
+
+func middlewareGetChirps(db *database.DB) http.HandlerFunc {
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+		chirps, err := db.GetChirps()
+		if err != nil {
+			respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error retrieving chirps from db %v\n", err))
+			return
+
+		}
+		respondWithJSON(w, http.StatusOK, chirps)
+
+	})
+
+}
+
+func middlewareGetChirpsById(db *database.DB) http.HandlerFunc {
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chirps, err := db.GetChirps()
+		if err != nil {
+			respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error retrieving chirps from db %v\n", err))
+			return
+		} //func URLParam(r *http.Request, key string) string
+		id := chi.URLParam(r, "chirpid")
+		id_int, err := strconv.Atoi(id)
+		if err != nil {
+			respondWithError(w, http.StatusInternalServerError, fmt.Sprintf("Error converting str(id)  %v\n", err))
+
+		}
+		for _, chirp := range chirps {
+			if chirp.Id == id_int {
+				respondWithJSON(w, http.StatusOK, chirp)
+				return
+			}
+		}
+
+		respondWithError(w, http.StatusNotFound, fmt.Sprint("Not Found\n"))
+
+	})
 
 }
