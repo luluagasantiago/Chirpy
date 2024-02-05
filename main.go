@@ -48,6 +48,11 @@ func main() {
 	chirpsGetByIdHandler := middlewareGetChirpsById(db)
 	apiRouter.Get("/chirps/{chirpid}", chirpsGetByIdHandler)
 
+	usersPostHandler := middlewarePostUsers(db)
+	apiRouter.Post("/users", usersPostHandler)
+	loginPostHandler := middlewareLoginPostHandler(db)
+	apiRouter.Post("/login", loginPostHandler)
+
 	router.Mount("/api", apiRouter)
 
 	adminRouter := chi.NewRouter()
@@ -249,6 +254,64 @@ func middlewareGetChirpsById(db *database.DB) http.HandlerFunc {
 		}
 
 		respondWithError(w, http.StatusNotFound, fmt.Sprint("Not Found\n"))
+
+	})
+
+}
+
+func middlewarePostUsers(db *database.DB) http.HandlerFunc {
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+		type parameters struct {
+			Email    string `json:"email"`
+			Password string `json:"password"`
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		params := parameters{}
+		err := decoder.Decode(&params)
+
+		if err != nil {
+			respondWithError(w, http.StatusInternalServerError, "Couldn't decode parameters")
+			return
+		}
+
+		user, err := db.CreateUser(params.Email, params.Password)
+		if err != nil {
+			//fmt.Printf("Error when creating chirp in db %v\n", err)
+			respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Error when creating user in db %v\n", err))
+			return
+		}
+
+		respondWithJSON(w, http.StatusCreated, user)
+
+	})
+
+}
+
+func middlewareLoginPostHandler(db *database.DB) http.HandlerFunc {
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+		type parameters struct {
+			Email    string `json:"email"`
+			Password string `json:"password"`
+		}
+
+		decoder := json.NewDecoder(r.Body)
+		params := parameters{}
+		err := decoder.Decode(&params)
+
+		if err != nil {
+			respondWithError(w, http.StatusInternalServerError, "Couldn't decode parameters")
+			return
+		}
+		userNoPass, err := db.UserLookUp(params.Email, params.Password)
+		if err != nil {
+			respondWithError(w, http.StatusUnauthorized, err.Error())
+		}
+		respondWithJSON(w, http.StatusOK, userNoPass)
 
 	})
 
