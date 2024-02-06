@@ -5,19 +5,32 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/joho/godotenv"
 	"github.com/luluagasantiago/Chirpy/internal/database"
 )
 
 type apiConfig struct {
 	fileserverHits int
+	jwtSecret      string
+	database       *database.DB
 }
 
 func main() {
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+
+	}
+	jwtSecret1 := os.Getenv("JWT_SECRET")
+
 	const filepathRoot = "."
 	const port = "8080"
 	router := chi.NewRouter()
@@ -29,6 +42,8 @@ func main() {
 
 	apcfg := apiConfig{
 		fileserverHits: 0,
+		jwtSecret:      jwtSecret1,
+		database:       db,
 	}
 
 	fsHandler := apcfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(filepathRoot))))
@@ -50,8 +65,8 @@ func main() {
 
 	usersPostHandler := middlewarePostUsers(db)
 	apiRouter.Post("/users", usersPostHandler)
-	loginPostHandler := middlewareLoginPostHandler(db)
-	apiRouter.Post("/login", loginPostHandler)
+
+	apiRouter.Post("/login", apcfg.loginPostHandler)
 
 	router.Mount("/api", apiRouter)
 
@@ -290,29 +305,64 @@ func middlewarePostUsers(db *database.DB) http.HandlerFunc {
 
 }
 
-func middlewareLoginPostHandler(db *database.DB) http.HandlerFunc {
+func (apiCfg *apiConfig) loginPostHandler(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Email              string `json:"email"`
+		Password           string `json:"password"`
+		Expires_in_seconds int    `json:"expires_in_seconds,omitempty"`
+	}
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
 
-		type parameters struct {
-			Email    string `json:"email"`
-			Password string `json:"password"`
-		}
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, err.Error()+"DEC PARAMS")
+		return
+	}
 
-		decoder := json.NewDecoder(r.Body)
-		params := parameters{}
-		err := decoder.Decode(&params)
+	userNoPass, err := apiCfg.database.UserLookUp(params.Email, params.Password)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, err.Error()+"LookUP error")
+	}
 
-		if err != nil {
-			respondWithError(w, http.StatusInternalServerError, "Couldn't decode parameters")
-			return
-		}
-		userNoPass, err := db.UserLookUp(params.Email, params.Password)
-		if err != nil {
-			respondWithError(w, http.StatusUnauthorized, err.Error())
-		}
-		respondWithJSON(w, http.StatusOK, userNoPass)
+	// Create JWT
+	issuedAt := time.Now().UTC()
+	//exp := issuedAt.Add(time.Duration(params.Expires_in_seconds))
+	// when the client doesn't sets the expire_in_second, it is 0 by default,
+	// in that case we change that to 24 hs
+	if params.Expires_in_seconds == 0 {
+		params.Expires_in_seconds = 24 * 3600
+	}
+	expires := issuedAt.Add(time.Second * time.Duration(params.Expires_in_seconds))
 
-	})
+	claims := jwt.RegisteredClaims{
+		Issuer:    "chirpy",
+		IssuedAt:  jwt.NewNumericDate(issuedAt),
+		ExpiresAt: jwt.NewNumericDate(expires),
+		Subject:   fmt.Sprint(userNoPass.Id),
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tPrinf, _ := token.Claims.GetExpirationTime()
+	fmt.Printf("\ntoken will expire at: %v\n", tPrinf)
+	signedToken, err := token.SignedString([]byte(apiCfg.jwtSecret))
+
+	if err != nil {
+		fmt.Print("\n\n\nCouldn't sign the token\n\n\n")
+		respondWithError(w, http.StatusInternalServerError, err.Error()+"Error signing TOken"+signedToken)
+	}
+
+	userWithToken := struct {
+		Id    int    `json:"id"`
+		Email string `json:"email"`
+		Token string `json:"token"`
+	}{
+		Id:    userNoPass.Id,
+		Email: userNoPass.Email,
+		Token: signedToken,
+	}
+
+	respondWithJSON(w, http.StatusOK, userWithToken)
 
 }

@@ -2,3 +2,4 @@ Chirpy
 database.json
 main
 --i
+.env
