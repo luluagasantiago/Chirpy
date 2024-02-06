@@ -109,6 +109,44 @@ func (db *DB) UserLookUp(email, password string) (UserWithoutPass, error) {
 
 }
 
+func (db *DB) UpdateUser(id_user int, email, password string) (UserWithoutPass, error) {
+	user := User{}
+	userNoPass := UserWithoutPass{}
+
+	cbUsers, err := db.loadDB()
+
+	if err != nil {
+		fmt.Print("Error when loading db")
+		return userNoPass, err
+	}
+
+	// id will be equal to the actual number of Chirps. 0 base index
+	id := id_user
+	user.Email = email
+	user.Id = id
+	encryptedPass, err := bcrypt.GenerateFromPassword([]byte(password), 0)
+	if err != nil {
+		fmt.Println("Err when hashing password")
+		return userNoPass, err
+	}
+	//func GenerateFromPassword(password []byte, cost int) ([]byte, error)
+	user.Password = encryptedPass
+
+	delete(cbUsers.Users, id)
+	cbUsers.Users[id] = user
+
+	err = db.writeDB(cbUsers)
+
+	if err != nil {
+		fmt.Print("Error when writing to db")
+		return userNoPass, err
+	}
+	userNoPass.Email = email
+	userNoPass.Id = id
+
+	return userNoPass, nil
+}
+
 func (db *DB) CreateUser(email, password string) (UserWithoutPass, error) {
 	user := User{}
 	userNoPass := UserWithoutPass{}

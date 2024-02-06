@@ -67,6 +67,7 @@ func main() {
 	apiRouter.Post("/users", usersPostHandler)
 
 	apiRouter.Post("/login", apcfg.loginPostHandler)
+	apiRouter.Put("/users", apcfg.usersPutHandler)
 
 	router.Mount("/api", apiRouter)
 
@@ -323,7 +324,8 @@ func (apiCfg *apiConfig) loginPostHandler(w http.ResponseWriter, r *http.Request
 
 	userNoPass, err := apiCfg.database.UserLookUp(params.Email, params.Password)
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, err.Error()+"LookUP error")
+		respondWithError(w, http.StatusUnauthorized, err.Error()+" LookUP error")
+		return
 	}
 
 	// Create JWT
@@ -351,6 +353,7 @@ func (apiCfg *apiConfig) loginPostHandler(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		fmt.Print("\n\n\nCouldn't sign the token\n\n\n")
 		respondWithError(w, http.StatusInternalServerError, err.Error()+"Error signing TOken"+signedToken)
+		return
 	}
 
 	userWithToken := struct {
@@ -364,5 +367,75 @@ func (apiCfg *apiConfig) loginPostHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	respondWithJSON(w, http.StatusOK, userWithToken)
+
+}
+
+func (apiCfg *apiConfig) usersPutHandler(w http.ResponseWriter, r *http.Request) {
+	type parameters struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, err.Error()+"DEC PARAMS")
+		return
+	}
+
+	t := strings.TrimSpace(strings.Split(r.Header.Get("Authorization"), " ")[1])
+	fmt.Printf("\n\ntoken: %v %[1]T:\n\n", t)
+
+	type customClaims struct {
+		jwt.RegisteredClaims
+	}
+
+	tokenStruct, err := jwt.ParseWithClaims(t, &customClaims{}, func(token *jwt.Token) (interface{}, error) {
+		// Don't forget to validate the alg is what you expect:
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("Unexpected signing method: %v", token.Header["alg"])
+		}
+
+		// hmacSampleSecret is a []byte containing your secret, e.g. []byte("my_secret_key")
+		return []byte(apiCfg.jwtSecret), nil
+	})
+
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+
+	/*
+		userWithToken := struct {
+			Id    int    `json:"id"`
+			Email string `json:"email"`
+			Token string `json:"token"`
+		}{
+			Id:    userNoPass.Id,
+			Email: userNoPass.Email,
+			Token: signedToken,
+
+		}*/
+
+	subId, err := tokenStruct.Claims.GetSubject()
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	subIdInt, err := strconv.Atoi(subId)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	updatedUser, err := apiCfg.database.UpdateUser(subIdInt, params.Email, params.Password)
+
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, updatedUser)
 
 }
